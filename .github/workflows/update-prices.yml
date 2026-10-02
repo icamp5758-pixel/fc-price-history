@@ -1,9 +1,9 @@
-name: Update FC defaults
+name: Update FC prices
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 */2 * * *'
-
+    - cron: '17 0 * * *'
 
 permissions:
   contents: write
@@ -16,6 +16,7 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +34,7 @@ jobs:
           PYTHONUNBUFFERED: '1'
           WORKERS: '12'
           REQUESTS_PER_SECOND: '16'
+          KEEP_DAYS: '90'
         run: python graphcrawler.py
 
       - name: Keep collected file as artifact
@@ -43,15 +45,26 @@ jobs:
           path: price_history.json
           retention-days: 7
 
-      - name: Commit and push prices
+      - name: Commit small history file
         run: |
           test -s price_history.json
+          SIZE=$(stat -c%s price_history.json)
+          echo "price_history.json size=$SIZE bytes"
+
+          if [ "$SIZE" -ge 95000000 ]; then
+            echo "File is too large for normal GitHub storage."
+            echo "Artifact upload is preserved, so stopping before git push."
+            exit 0
+          fi
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- price_history.json
+
           if git diff --cached --quiet; then
             echo 'No price changes'
             exit 0
           fi
+
           git commit -m 'Update FC price history'
           git push
