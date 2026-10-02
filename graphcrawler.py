@@ -181,7 +181,7 @@ def main():
                 try: results=fut.result()
                 except Exception as e: results=[(g,None,repr(e)) for g in GRADES]
                 ps=0
-                        for g,pairs,err in results:
+                for g,pairs,err in results:
             if err is None:
                 try:
                     cand=copy.deepcopy(history[spid])
