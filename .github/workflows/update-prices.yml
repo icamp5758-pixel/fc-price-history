@@ -3,7 +3,7 @@ name: Update FC prices
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 0 * * *'
+    - cron: '17 */2 * * *'
 
 permissions:
   contents: write
