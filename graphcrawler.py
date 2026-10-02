@@ -10,6 +10,7 @@ SOURCE=os.getenv('SEED_URL','https://raw.githubusercontent.com/JCH1231/fifa-simu
 ENDPOINT='https://m.fconline.nexon.com/datacenter/PlayerPriceGraph'
 OUT=Path('price_history.json')
 GRADES=[8,9,10,11]
+TEST_LIMIT=int(os.getenv('TEST_LIMIT','20'))
 KEEP_DAYS=int(os.getenv('KEEP_DAYS','90'))
 WORKERS=int(os.getenv('WORKERS','12'))
 RPS=float(os.getenv('REQUESTS_PER_SECOND','16'))
@@ -164,6 +165,7 @@ def main():
     history=load_history()
     # Critical: compact before crawling, so checkpoints never grow without bound.
     for p in history.values(): compact_player(p,today)
+    if TEST_LIMIT>0: history=dict(list(history.items())[:TEST_LIMIT])
     total=len(history); success=changed=errors=completed=streak=0; started=last_save=time.monotonic()
     print(f'PLAYERS={total} KEEP_DAYS={KEEP_DAYS} DATE={today}',flush=True)
     players=iter(history); pool=ThreadPoolExecutor(max_workers=WORKERS); pending={}
@@ -194,13 +196,13 @@ def main():
                     print(f'{completed}/{total} success={success} changed={changed} errors={errors} ETA={eta/60:.1f}min',flush=True)
                 if streak>=100: raise RuntimeError('STOP: 100 consecutive players returned no data')
                 submit()
-            if success and time.monotonic()-last_save>=CHECKPOINT_SECONDS:
+            if success and TEST_LIMIT==0 and time.monotonic()-last_save>=CHECKPOINT_SECONDS:
                 save(history); last_save=time.monotonic(); print('CHECKPOINT',completed,flush=True)
     finally:
         STOP.set()
         for f in pending:f.cancel()
         pool.shutdown(wait=True,cancel_futures=True)
-        if success: save(history)
+        if success and TEST_LIMIT==0: save(history)
     if success==0: raise RuntimeError('No price data extracted')
     print(f'DONE players={completed} success={success} changed={changed} errors={errors} bytes={OUT.stat().st_size}',flush=True)
 if __name__=='__main__': main()
