@@ -183,7 +183,7 @@ def main():
                 ps=0
                 for g,pairs,err in results:
                     if TEST_LIMIT>0 and err is None and pairs:
-                print('TEST_RAW',spid,'grade',g,'last=',pairs[-1],flush=True)
+                    print('TEST_RAW',spid,'grade',g,'last=',pairs[-1],flush=True)
                     if err is None:
                         try:
                             cand=copy.deepcopy(history[spid]); did=merge(cand,g,pairs,today); history[spid]=cand
