@@ -28,7 +28,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Update prices
-        run: python graphcrawler.py
+        run: python probe.py
 
       - name: Commit changed history
         run: |
