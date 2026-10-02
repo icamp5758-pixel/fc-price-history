@@ -6,7 +6,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 import requests
 
-SOURCE=os.getenv('SEED_URL','https://raw.githubusercontent.com/JCH1231/fifa-simulation-data/main/price_history.json')
+SOURCE=os.getenv('SEED_URL','https://raw.githubusercontent.com/icamp5758-pixel/fc-price-history/main/price_history.json')
 ENDPOINT='https://m.fconline.nexon.com/datacenter/PlayerPriceGraph'
 OUT=Path('price_history.json')
 GRADES=[8,9,10,11]
@@ -160,55 +160,151 @@ def save(data):
     os.replace(tmp,OUT)
 
 def main():
-    if not 1<=WORKERS<=15: raise ValueError('WORKERS must be 1..15')
-    today=datetime.now(timezone(timedelta(hours=9))).date()
-    history=load_history()
-    # Critical: compact before crawling, so checkpoints never grow without bound.
-    for p in history.values(): compact_player(p,today)
-    if TEST_LIMIT>0: history=dict(list(history.items())[:TEST_LIMIT])
-    total=len(history); success=changed=errors=completed=streak=0; started=last_save=time.monotonic()
-    print(f'PLAYERS={total} KEEP_DAYS={KEEP_DAYS} DATE={today}',flush=True)
-    players=iter(history); pool=ThreadPoolExecutor(max_workers=WORKERS); pending={}
+    if not 1 <= WORKERS <= 15:
+        raise ValueError('WORKERS must be 1..15')
+
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    history = load_history()
+
+    # Keep only the latest KEEP_DAYS daily points.
+    for p in history.values():
+        compact_player(p, today)
+
+    # TEST_LIMIT > 0 = quick diagnostic run only.
+    # The full price_history.json is never overwritten in test mode.
+    if TEST_LIMIT > 0:
+        history = dict(list(history.items())[:TEST_LIMIT])
+
+    total = len(history)
+    success = changed = errors = completed = streak = 0
+    started = last_save = time.monotonic()
+
+    print(
+        f'PLAYERS={total} KEEP_DAYS={KEEP_DAYS} DATE={today} TEST_LIMIT={TEST_LIMIT}',
+        flush=True,
+    )
+
+    players = iter(history)
+    pool = ThreadPoolExecutor(max_workers=WORKERS)
+    pending = {}
+
     def submit():
-        spid=next(players,None)
-        if spid is not None: pending[pool.submit(fetch_player,spid)]=spid
-    for _ in range(min(total,WORKERS*2)): submit()
+        spid = next(players, None)
+        if spid is not None:
+            pending[pool.submit(fetch_player, spid)] = spid
+
+    for _ in range(min(total, WORKERS * 2)):
+        submit()
+
     try:
         while pending:
-            done,_=wait(pending,timeout=1,return_when=FIRST_COMPLETED)
+            done, _ = wait(
+                pending,
+                timeout=1,
+                return_when=FIRST_COMPLETED,
+            )
+
             for fut in done:
-                spid=pending.pop(fut)
-                try: results=fut.result()
-                except Exception as e: results=[(g,None,repr(e)) for g in GRADES]
-                ps=0
-                for g,pairs,err in results:
-            if err is None:
+                spid = pending.pop(fut)
+
                 try:
-                    cand=copy.deepcopy(history[spid])
-                    did=merge(cand,g,pairs,today)
-                    history[spid]=cand
-                    success+=1
-                    ps+=1
-                    changed+=int(did)
+                    results = fut.result()
                 except Exception as e:
-                    err=repr(e)
-            if err is not None:
-                errors+=1
-                if errors<=10:
-                    print('ERROR',spid,g,err,flush=True)
-                completed+=1; streak=0 if ps else streak+1
-                if completed%100==0 or completed==total:
-                    elapsed=time.monotonic()-started; eta=elapsed/completed*(total-completed)
-                    print(f'{completed}/{total} success={success} changed={changed} errors={errors} ETA={eta/60:.1f}min',flush=True)
-                if streak>=100: raise RuntimeError('STOP: 100 consecutive players returned no data')
+                    results = [(g, None, repr(e)) for g in GRADES]
+
+                ps = 0
+
+                for g, pairs, err in results:
+                    if err is None and TEST_LIMIT > 0 and pairs:
+                        print(
+                            'TEST_RAW',
+                            spid,
+                            'grade',
+                            g,
+                            'last=',
+                            pairs[-1],
+                            flush=True,
+                        )
+
+                    if err is None:
+                        try:
+                            cand = copy.deepcopy(history[spid])
+                            did = merge(cand, g, pairs, today)
+                            history[spid] = cand
+                            success += 1
+                            ps += 1
+                            changed += int(did)
+                        except Exception as e:
+                            err = repr(e)
+
+                    if err is not None:
+                        errors += 1
+                        if errors <= 10:
+                            print('ERROR', spid, g, err, flush=True)
+
+                completed += 1
+                streak = 0 if ps else streak + 1
+
+                if completed % 100 == 0 or completed == total:
+                    elapsed = time.monotonic() - started
+                    eta = (
+                        elapsed / completed * (total - completed)
+                        if completed
+                        else 0
+                    )
+                    print(
+                        f'{completed}/{total} '
+                        f'success={success} changed={changed} '
+                        f'errors={errors} ETA={eta/60:.1f}min',
+                        flush=True,
+                    )
+
+                if streak >= 100:
+                    raise RuntimeError(
+                        'STOP: 100 consecutive players returned no data'
+                    )
+
                 submit()
-            if success and TEST_LIMIT==0 and time.monotonic()-last_save>=CHECKPOINT_SECONDS:
-                save(history); last_save=time.monotonic(); print('CHECKPOINT',completed,flush=True)
+
+            if (
+                success
+                and TEST_LIMIT == 0
+                and time.monotonic() - last_save >= CHECKPOINT_SECONDS
+            ):
+                save(history)
+                last_save = time.monotonic()
+                print('CHECKPOINT', completed, flush=True)
+
     finally:
         STOP.set()
-        for f in pending:f.cancel()
-        pool.shutdown(wait=True,cancel_futures=True)
-        if success and TEST_LIMIT==0: save(history)
-    if success==0: raise RuntimeError('No price data extracted')
-    print(f'DONE players={completed} success={success} changed={changed} errors={errors} bytes={OUT.stat().st_size}',flush=True)
-if __name__=='__main__': main()
+
+        for f in pending:
+            f.cancel()
+
+        pool.shutdown(wait=True, cancel_futures=True)
+
+        # Never overwrite the full file during a 20-player test.
+        if success and TEST_LIMIT == 0:
+            save(history)
+
+    if success == 0:
+        raise RuntimeError('No price data extracted')
+
+    if TEST_LIMIT > 0:
+        print(
+            f'DONE TEST players={completed} success={success} '
+            f'changed={changed} errors={errors} '
+            f'bytes_unchanged={OUT.stat().st_size}',
+            flush=True,
+        )
+    else:
+        print(
+            f'DONE players={completed} success={success} '
+            f'changed={changed} errors={errors} '
+            f'bytes={OUT.stat().st_size}',
+            flush=True,
+        )
+
+
+if __name__ == '__main__':
+    main()
