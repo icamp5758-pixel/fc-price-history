@@ -181,17 +181,21 @@ def main():
                 try: results=fut.result()
                 except Exception as e: results=[(g,None,repr(e)) for g in GRADES]
                 ps=0
-                for g,pairs,err in results:
-                    if TEST_LIMIT>0 and err is None and pairs:
-                    print('TEST_RAW',spid,'grade',g,'last=',pairs[-1],flush=True)
-                    if err is None:
-                        try:
-                            cand=copy.deepcopy(history[spid]); did=merge(cand,g,pairs,today); history[spid]=cand
-                            success+=1; ps+=1; changed+=int(did)
-                        except Exception as e: err=repr(e)
-                    if err is not None:
-                        errors+=1
-                        if errors<=10: print('ERROR',spid,g,err,flush=True)
+                        for g,pairs,err in results:
+            if err is None:
+                try:
+                    cand=copy.deepcopy(history[spid])
+                    did=merge(cand,g,pairs,today)
+                    history[spid]=cand
+                    success+=1
+                    ps+=1
+                    changed+=int(did)
+                except Exception as e:
+                    err=repr(e)
+            if err is not None:
+                errors+=1
+                if errors<=10:
+                    print('ERROR',spid,g,err,flush=True)
                 completed+=1; streak=0 if ps else streak+1
                 if completed%100==0 or completed==total:
                     elapsed=time.monotonic()-started; eta=elapsed/completed*(total-completed)
