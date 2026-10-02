@@ -1,3 +1,4 @@
+import re
 import requests
 
 SOURCE = "https://raw.githubusercontent.com/JCH1231/fifa-simulation-data/main/price_history.json"
@@ -5,53 +6,39 @@ ENDPOINT = "https://m.fconline.nexon.com/datacenter/PlayerPriceGraph"
 
 s = requests.Session()
 s.headers.update({
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/126 Safari/537.36",
     "Accept": "*/*",
     "Referer": "https://m.fconline.nexon.com/datacenter",
     "X-Requested-With": "XMLHttpRequest",
 })
 
-print("=== FC ONLINE PROBE ===")
+history = s.get(SOURCE, timeout=60).json()
 
-r = s.get(SOURCE, timeout=60)
-r.raise_for_status()
-history = r.json()
-print("players =", len(history))
+spid = next(iter(history))
+player = history[spid]
 
-for spid, player in history.items():
-    values = player.get("values") or {}
+print("=== SORTEDVALUES PROBE ===")
+print("PLAYER =", spid, player.get("name"))
 
-    grades = [
-        g for g in ("8", "9", "10", "11")
-        if any(v not in (None, 0, "0") for v in (values.get(g) or []))
-    ]
+r = s.post(
+    ENDPOINT,
+    data={"spid": str(spid), "n1strong": "8"},
+    timeout=30
+)
 
-    if not grades:
-        continue
+print("STATUS =", r.status_code)
+print("LENGTH =", len(r.text))
 
-    print("PLAYER =", spid, player.get("name"), player.get("season"))
+html = r.text
 
-    for grade in grades[:2]:
-        x = s.post(
-            ENDPOINT,
-            data={"spid": str(spid), "n1strong": grade},
-            timeout=30
-        )
+# sortedValues가 등장하는 모든 위치 확인
+positions = [m.start() for m in re.finditer(r"sortedValues", html)]
+print("sortedValues COUNT =", len(positions))
 
-        print("GRADE =", grade)
-        print("STATUS =", x.status_code)
-        print("TYPE =", x.headers.get("content-type"))
-        print("LENGTH =", len(x.content))
-        print("BODY =", x.text[:3000])
+for i, pos in enumerate(positions[:10], 1):
+    print("\n========== MATCH", i, "==========")
+    start = max(0, pos - 1500)
+    end = min(len(html), pos + 5000)
+    print(html[start:end])
 
-        try:
-            obj = x.json()
-            print("JSON TYPE =", type(obj).__name__)
-            if isinstance(obj, dict):
-                print("JSON KEYS =", list(obj.keys()))
-        except Exception as e:
-            print("JSON ERROR =", repr(e))
-
-    break
-
-print("=== PROBE FINISHED ===")
+print("\n=== PROBE FINISHED ===")
