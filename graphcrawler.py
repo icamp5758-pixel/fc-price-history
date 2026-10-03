@@ -79,12 +79,26 @@ def extract_chart(html):
     m=re.search(r'var\s+chartData\s*=\s*\{(.*?)\}\s*;',html,re.S)
     if not m:return []
     ts=extract_array(m.group(1),'time'); vs=extract_array(m.group(1),'value'); out=[]
+    if len(ts) != len(vs): raise ValueError('Chart dates/prices length mismatch')
     for t,v in zip(ts,vs):
         try:
             p=int(str(v).replace(',','').replace('"','').replace("'",'').strip())
             if p>0: out.append((str(t).strip(),p))
         except Exception: pass
     return out
+
+def chart_days(pairs, today):
+    """Infer years backwards: chart order is oldest to newest."""
+    result = []
+    anchor = today
+    for raw, price in reversed(pairs):
+        d = as_day(raw, anchor)
+        if d is None or d > anchor:
+            raise ValueError(f'Invalid chart date: {raw}')
+        result.append((d, int(price), str(raw)))
+        anchor = d
+    return list(reversed(result))
+
 
 def as_day(raw,today):
     s=str(raw).strip()
@@ -130,9 +144,20 @@ def merge(player,grade,pairs,today):
         maps[str(g)]={t:arr[i] for i,t in enumerate(times) if i<len(arr) and arr[i] not in (None,0,'0')}
     g=str(grade); maps.setdefault(g,{})
     before=dict(maps[g]); cutoff=today-timedelta(days=KEEP_DAYS-1)
-    for t,p in pairs:
-        d=as_day(t,today)
-        if d and cutoff<=d<=today: maps[g][d.isoformat()]=int(p)
+    dated = chart_days(pairs, today)
+    newest = max(d for d, _, _ in dated)
+    # Remove only records demonstrably produced by the old year inference.
+    # A wrongly recent date must match this exact older chart value.
+    for actual, price, raw in dated:
+        wrong = as_day(raw, today)
+        if wrong and wrong > newest and wrong != actual:
+            key = wrong.isoformat()
+            if maps[g].get(key) == price:
+                del maps[g][key]
+                print('REPAIR_YEAR', player.get('name', ''), g, key,
+                      'historical_date=', actual.isoformat(), flush=True)
+    for d,p,_ in dated:
+        if cutoff<=d<=today: maps[g][d.isoformat()]=int(p)
     # remove old days from every grade, then rebuild one shared daily axis
     for gg in maps:
         maps[gg]={k:v for k,v in maps[gg].items() if (lambda d: cutoff<=d<=today)(date.fromisoformat(k))}
@@ -165,6 +190,10 @@ def main():
 
     today = datetime.now(timezone(timedelta(hours=9))).date()
     history = load_history()
+    if TEST_LIMIT == 0 and OUT.exists():
+        backup = Path('price_history.before-year-fix.json')
+        if not backup.exists():
+            backup.write_bytes(OUT.read_bytes())
 
     # Keep only the latest KEEP_DAYS daily points.
     for p in history.values():
